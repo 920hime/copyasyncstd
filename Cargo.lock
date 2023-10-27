@@ -206,7 +206,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "copyasyncstd"
+name = "copy-asyncstd"
 version = "0.1.0"
 dependencies = [
  "async-std",
