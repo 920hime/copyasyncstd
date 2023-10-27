@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <title>65, Rust ランタイム By う～さん</title>
+  <meta content="text/html; charset=utf-8" http-equiv="Content-Type">
+  <meta content="A concise overview of the command shortcuts for nano, the editor, grouped by category."
+    name="description">
+  <meta content="cheatsheet, nano, editor, shortcuts, keystrokes, functions, operations, commands" name="keywords">
+  <meta content="Benno Schulenberg" name="author">
+</head>
+
+<body style="margin: 0;">
+  <h1>&nbsp;content</h1>
+  <style scoped="">
+    @import url("https://blog-imgs-144.fc2.com/z/e/n/zen2022/style.css");
+
+    mark {
+      background: linear-gradient(transparent 50%, aquamarine 100%);
+    }
+
+    .pastelYellow {
+      background: linear-gradient(transparent 50%, #ffff7f 100%);
+    }
+
+    .pastelPink {
+      background: linear-gradient(transparent 50%, #ff99ff 100%);
+    }
+
+    .box {
+      font-size: 1.0em;
+      padding: 0.3em;
+      border-width: 1px;
+      border-style: groove;
+      border-color: gray;
+      background-color: ghostwhite;
+    }
+
+    .center {
+      display: block;
+      margin: auto !important;
+    }
+
+    .right {
+      float: right;
+      margin: 0 0 0 0.5em;
+    }
+
+    .left {
+      float: left;
+      margin: 0 0.5em 0 0;
+    }
+
+    .align-center {
+      text-align: center;
+    }
+
+    .align-right {
+      text-align: right;
+    }
+
+    .align-left {
+      text-align: left;
+    }
+
+    span.green {
+      background-color: rgb(204, 255, 255);
+    }
+
+    span.pink {
+      background-color: rgb(255, 214, 255);
+    }
+
+    /*#ffd6ff*/
+    span.yellow {
+      background-color: #ffff7f;
+    }
+
+    dt {
+      font-weight: bold;
+    }
+
+    /* color: mediumblue;
+    */
+  </style><!-- page ここから -->
+  <nav style="background-color: #f7efff;">
+    <div style="margin-left: 1.5em;">
+      <p style="font-size:'+1';"><br><b>「昨日と同じ今日、今日と同じであろう明日。繰り返す日常を謳歌」</b></p>
+      <img alt="君子欄" src="https://blog-imgs-170.fc2.com/z/e/n/zen2022/kunsiran-01.jpg" width="1000" height="200"
+        decoding="async">
+
+      <p style="color: mediumblue"><b>「旦那、いよいよ async 制覇ですか？」<br>
+          『そやな、『プログラミング Rust』は async_std やからな！』</b></p>
+    </div>
+
+    <h3>1 はじめに</h3>
+    <h4>1.1 ランタイム (グリーンスレッド)</h4>
+    <div style="margin-left: 1.5em;">
+      <p>
+        前回は、人気 No.1 の <b>tokio</b> を使用しましたが今回は
+        No.2 の <b>async_std + futures</b>を使用します。<br>
+      </p>
+      <p>「glommio、Tokio、smolが、ネットワークやストレージなど、
+        主にサーバ・クライアントの実装に必要なAPIのみを非同期化しているのに対し、
+        async-stdは文字列操作など、全ての標準APIを非同期化することを目指すという
+        ハードコアなやつです。」</p>
+    </div>
+
+    <h3>2 copy - async 関数</h3>
+    <h4>2.1 fs::copy</h4>
+    <div style="margin-left: 1.5em;">
+      標準の copy 関数を呼び出します
+      <div class="box">
+        <pre style="font-size: 1.0em;">
+use crate::Path;
+use async_std::fs;
+use async_std::fs::File;
+use async_std::io::{ReadExt, WriteExt};
+use futures::prelude::*;
+use futures::StreamExt;
+
+// #[derive(Debug, Clone)] // I/O buffer
+struct IOBUF {
+    buf: Vec&lt;u8&gt;,
+    length: usize,
+}
+
+/**
+* copy from to -&gt; length
+*
+* async fn copy(from: AsRef&lt;Path&gt;, to: AsRef&lt;Path&gt;) -&gt; Result&lt;u64, Error&gt;
+*/
+pub async fn copy<mark>&lt;P: AsRef&lt;Path&gt; + std::convert::AsRef&lt;async_std::path::Path&gt;&gt;</mark>(
+    from: P,
+    to: P,
+) -&gt; u64 {
+    let length = fs::copy(from, to).await;
+    length.unwrap()
+}</pre>
+      </div>
+      <mark>AsRef の定義が長くなりました</mark>
+    </div>
+
+    <h4>2.2 maxbuf</h4>
+    <div style="margin-left: 1.5em;">
+      シリアル実行のため時間はかかりますがオーバーヘッドは最小のはずです
+      <div class="box">
+        <pre style="font-size: 1.0em;">
+/**
+* copy maxbuf from to -&gt; length
+*/
+pub async fn copymax&lt;
+    P: AsRef&lt;Path&gt; + std::convert::AsRef&lt;async_std::path::Path&gt; + std::marker::Copy,
+&gt;(
+    from: P,
+    to: P,
+) -&gt; u64 {
+    const BUFSIZE: usize = 1024 * 1024;
+    let mut fr = File::open(from).await.unwrap();
+    let mut fw = File::create(to).await.unwrap();
+    let mut result: usize = 0;
+    let mut io = IOBUF {
+        buf: vec![0_u8; BUFSIZE],
+        length: 0,
+    };
+    loop {
+        io.length = <mark>ReadExt::read(&amp;mut fr</mark>, &amp;mut io.buf).await.unwrap();
+        if io.length == 0 {
+            break;
+        }
+        let _ = <mark>WriteExt::write(&amp;mut fw</mark>, &amp;io.buf[..io.length]).await;
+        result += io.length;
+    }
+    let _ = <mark>WriteExt::flush</mark>(&amp;mut fw);
+    let fromsize: usize = get_meta_len(&amp;from).await.try_into().unwrap();
+    assert_eq!(fromsize, result, &quot;(original:result) &quot;);
+    result as u64
+}</pre>
+      </div>
+      <mark>File の位置が変わりました</mark>
+    </div>
+
+    <h4>2.3 channel</h4>
+    <div style="margin-left: 1.5em;">
+      わずかなオーバーヘッドで並列 I/O する
+      <mark>エレガントなアルゴリズム</mark>です
+      <div class="box">
+        <pre style="font-size: 1.0em;">
+/**
+* copy channel from | to -&gt; length
+*/
+pub async fn copych&lt;P: AsRef&lt;Path&gt; + std::convert::AsRef&lt;async_std::path::Path&gt;&gt;(
+    from: P,
+    to: P,
+) -&gt; u64 {
+    use async_std::task;
+    use async_std::task::JoinHandle;
+    use futures::channel::mpsc;
+    const BUFSIZE: usize = 1024 * 1024;
+    let fromsize: usize = get_meta_len(&amp;from).await.try_into().unwrap();
+    let mut fr = File::open(from).await.unwrap();
+    let mut fw = File::create(to).await.unwrap();
+    let (mut tx, mut rx) = mpsc::channel(2);
+    let _handle: JoinHandle&lt;()&gt; = task::spawn(async move {
+        loop {
+            let mut io = IOBUF {
+                buf: vec![0_u8; BUFSIZE],
+                length: 0,
+            };
+            io.length = ReadExt::read(&amp;mut fr, &amp;mut io.buf).await.unwrap();
+            if io.length == 0 {
+                break;
+            }
+            let _ = tx.send(io).await;
+        }
+    });
+    let mut result: usize = 0; // 受信
+    while let Some(received) = <mark>rx.next().await</mark> {
+        result += received.length; // write の前に使用する
+        let _ = WriteExt::write(&amp;mut fw, &amp;received.buf[..received.length]).await;
+    }
+    let _ = WriteExt::flush(&amp;mut fw);
+    assert_eq!(fromsize, result, &quot;(original:result) &quot;);
+    result as u64
+}</pre>
+      </div>
+      <mark>イテレータが変わりました</mark>
+    </div>
+
+    <h3>3 グリーンスレッド</h3>
+    <h4>3.1 main スレッド</h4>
+    <div style="margin-left: 1.5em;">
+      ワーカスレッドプールを使い可能な限り仕事(Task)をスレッドに分散します。
+      <div class="box">
+        <pre style="font-size: 1.0em;">
+use async_std::task::JoinHandle;
+static mut HANDLES: Vec&lt;JoinHandle&lt;()&gt;&gt; = Vec::new();
+static THREADS: AtomicI32 = AtomicI32::new(0);
+
+pub fn set_threads(threads: i32) {
+    atomic::atomic_set(&amp;THREADS, threads); // threads number
+}
+
+pub fn main() {
+    use async_std::task;
+    let _ = <mark>task::block_on(spawnx()); // 初期スレッドの起動</mark>
+}
+// グリーンスレッド
+async fn spawnx() {
+    use async_std::task;
+    let threads: i32 = atomic::atomic_get(&amp;THREADS);
+    for _ in 0..threads {
+        let handle: JoinHandle&lt;()&gt; = task::spawn(async {
+            loop {
+                let _pop = thmod::get(); // リクエストを取得
+                match _pop {
+                    Some(x) =&gt; task(x).await, // タスクを開始
+                    None =&gt; {
+                        if thmod::is_done() {
+                            break;
+                        } else {
+                            sleep(false).await;
+                        }
+                    }
+                };
+            }
+        });
+        unsafe {
+            HANDLES.push(handle); // スレッドハンドルを登録
+        }
+    }
+    waiting_for_completion().await; // 完了待ち
+}</pre>
+      </div>
+    </div>
+
+    <h3>4 ベンチマーク</h3>
+    <div style="margin-left: 1.5em;">
+      <p><b>環境： Win10, CoreI5, Mem:8GB, メインスレッド + 3スレッド<br>
+          IN[D]:内蔵SSD, OUT[M]:外付けUSB3.0+SSD<br>
+          テストデータ: 1,773楽曲(.flac), 65.5Gb
+        </b></p>
+      <table border="0">
+        <tr>
+          <th>Test case</th>
+          <th>&nbsp;async_std</th>
+          <th>&nbsp;<mark>tokio </mark></th>
+          <th>&nbsp;軽量スレッド</th>
+          <th>&nbsp;<mark>Rayon Th:自動</mark></th>
+          <th>&nbsp;備考</th>
+        </tr>
+        <tr>
+          <td>① fs::copy</td>
+          <td>&nbsp;2:59.179</td>
+          <td>&nbsp;<mark>3:00.180</mark></td>
+          <td>&nbsp;2:59.179</td>
+          <td>&nbsp;<mark>2:58.178</mark></td>
+          <td>&nbsp;buf:? 基準</td>
+        </tr>
+        <tr>
+          <td>② maxbuf</td>
+          <td>&nbsp;2:59.179</td>
+          <td>&nbsp;<mark>2:59.179</mark></td>
+          <td>&nbsp;2:59.179</td>
+          <td>&nbsp;<mark>2:59.179</mark></td>
+          <td>&nbsp;</td>
+        </tr>
+        <tr>
+          <td>③ channel</td>
+          <td>&nbsp;2:59.179</td>
+          <td>&nbsp;<mark>3:00.180</mark></td>
+          <td>&nbsp;2:59.179</td>
+          <td>&nbsp;<mark>2:58.178</mark></td>
+          <td>&nbsp;Th:N*2</td>
+        </tr>
+      </table>
+    </div>
+    <ol>
+      <li>fs::copy - 標準の copy です</li>
+      <li>maxbuf - 1M の buffer を使用して read/write します</li>
+      <li>channel - 1M の buffer を使用して 並列 I/O します</li>
+    </ol>
+    <div style="margin-left: 1.5em;">
+      <mark>今回のベンチマークは 2回走らせて良い方を採用しました。
+        ちなみに悪い方は 3:00.180 です。</mark>
+      <p>
+        <img alt="copy" src="https://blog-imgs-170.fc2.com/z/e/n/zen2022/async-1.png" width="655" height="158"
+          decoding="async">
+      </p>
+    </div>
+
+    <h3>5 まとめ</h3>
+    <div style="margin-left: 1.5em;">
+      <p style="color: mediumblue"><b>「しかし、2日で完成させるとはもっと怖いもの知らずですね？」<br>
+          『そやな、残るは smol やけど情報が無いな！』</b><br>
+      </p>
+    </div>
+
+    <h3>6 オープンソース</h3>
+    <h4>6.1 インストール</h4>
+    <ol>
+      <li>Rust の実行環境を整えてください
+      </li>
+      <li>copyasyncstd をダウンロード「<a href="https://ja.osdn.net/projects/awk4j/releases/">
+          copyasyncstd-[var]_(Rust).zip</a>」して適当な場所に解凍<br>
+      </li>
+    </ol>
+
+    <h4>6.2 実行</h4>
+    <div style="margin-left: 1.5em;">
+      ターミナルを開き、copyasyncstd フォルダをカレントディレクトリにして、
+      <p><button>cargo b</button> / <button>cargo r</button> でコンパイル、
+        <button>copy.bat <mark>&lt;オプションパラメータ&gt;</mark></button>で実行
+      </p>
+    </div>
+
+    <h4>6.3 実行パラメータ</h4>
+    <div style="margin-left: 1.5em;">
+      <p>copy 入力フォルダ 出力フォルダ<br>
+        &nbsp; Mode<br>
+        &nbsp; [-c] // copy (既定値)<br>
+        &nbsp; [-m] // move<br>
+        &nbsp; [-r] // rename<br>
+        &nbsp; Queue<br>
+        &nbsp; [-q] // queue (既定値)<br>
+        &nbsp; [-s] // stack<br>
+        &nbsp; Options<br>
+        &nbsp; [-9] // thread number (既定値: -3)<br>
+        &nbsp; [+9] // queue, capacity number (既定値: +2048)<br>
+        &nbsp; Algorithm [前方一致]<br>
+        &nbsp; [std] // (既定値: fs::copy)<br>
+        &nbsp; [maxbuf]<br>
+        &nbsp; [channel]<br>
+      </p>
+    </div>
+
+  </nav>
+  <p></p>
+  <div style="text-align: right; font-style: italic; color: darkgray;">
+    「<a href="https://zen2022.blog.fc2.com/blog-entry-5.html">Table of contents</a>」 2023.10.20
+  </div>
+  <p></p>
+  <footer>
+    <!-- FC2カウンター ここから -->
+    <script language="javascript" src="//counter1.fc2.com/counter.php?id=37966978&main=1" type="text/javascript">
+    </script><noscript><img src="//counter1.fc2.com/counter_img.php?id=37966978&main=1"></noscript>
+  </footer><!-- FC2カウンター ここまで -->
+</body>
+
+</html>
